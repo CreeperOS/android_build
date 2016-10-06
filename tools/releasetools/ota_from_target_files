@@ -18,86 +18,65 @@
 Given a target-files zipfile, produces an OTA package that installs
 that build.  An incremental OTA is produced if -i is given, otherwise
 a full OTA is produced.
-
 Usage:  ota_from_target_files [flags] input_target_files output_ota_package
-
   --board_config  <file>
       Deprecated.
-
   -k (--package_key) <key> Key to use to sign the package (default is
       the value of default_system_dev_certificate from the input
       target-files's META/misc_info.txt, or
       "build/target/product/security/testkey" if that value is not
       specified).
-
       For incremental OTAs, the default value is based on the source
       target-file, not the target build.
-
   -i  (--incremental_from)  <file>
       Generate an incremental OTA using the given target-files zip as
       the starting build.
-
   -v  (--verify)
       Remount and verify the checksums of the files written to the
       system and vendor (if used) partitions.  Incremental builds only.
-
   -o  (--oem_settings)  <file>
       Use the file to specify the expected OEM-specific properties
       on the OEM partition of the intended device.
-
   -w  (--wipe_user_data)
       Generate an OTA package that will wipe the user data partition
       when installed.
-
   -n  (--no_prereq)
       Omit the timestamp prereq check normally included at the top of
       the build scripts (used for developer OTA packages which
       legitimately need to go back and forth).
-
   -e  (--extra_script)  <file>
       Insert the contents of file at the end of the update script.
-
   -a  (--aslr_mode)  <on|off>
       Specify whether to turn on ASLR for the package (on by default).
-
   -2  (--two_step)
       Generate a 'two-step' OTA package, where recovery is updated
       first, so that any changes made to the system partition are done
       using the new recovery (new kernel, etc.).
-
   --block
       Generate a block-based OTA if possible.  Will fall back to a
       file-based OTA if the target_files is older and doesn't support
       block-based OTAs.
-
   -z  Compress the block-based image using LZMA. Results in substantial
       space reduction at the cost of longer compress/decompress time.
       Requires the "backports.lzma" module to be installed.
-
   -b  (--binary)  <file>
       Use the given binary as the update-binary in the output package,
       instead of the binary in the build's target_files.  Use for
       development only.
-
   -t  (--worker_threads) <int>
       Specifies the number of worker-threads that will be used when
       generating patches for incremental updates (defaults to 3).
-
   --stash_threshold <float>
       Specifies the threshold that will be used to compute the maximum
       allowed stash size (defaults to 0.8).
-
   --backup <boolean>
       Enable or disable the execution of backuptool.sh.
       Disabled by default.
-
   --override_device <device>
       Override device-specific asserts. Can be a comma-separated list.
-
   --override_prop <boolean>
       Override build.prop items with custom vendor init.
       Enabled when TARGET_UNIFIED_DEVICE is defined in BoardConfig
-
 """
 
 import sys
@@ -145,6 +124,7 @@ OPTIONS.updater_binary = None
 OPTIONS.oem_source = None
 OPTIONS.fallback_to_full = True
 OPTIONS.backuptool = False
+OPTIONS.wipe_caches = False
 OPTIONS.override_device = 'auto'
 OPTIONS.override_prop = False
 OPTIONS.use_lzma = False
@@ -279,7 +259,6 @@ class Item:
     all children and determine the best strategy for using set_perm_recursive and
     set_perm to correctly chown/chmod all the files to their desired
     values.  Recursively calls itself for all descendants.
-
     Returns a dict of {(uid, gid, dmode, fmode, selabel, capabilities): count} counting up
     all descendants of this node.  (dmode or fmode may be None.)  Also
     sets the best_subtree of each directory Item to the (uid, gid,
@@ -590,10 +569,36 @@ else if get_stage("%(bcb_dev)s") == "3/3" then
   script.SetPermissionsRecursive("/tmp/install", 0, 0, 0755, 0644, None, None)
   script.SetPermissionsRecursive("/tmp/install/bin", 0, 0, 0755, 0755, None, None)
 
+  script.Print("******************************************");
+  script.Print("               CreeperOS-1.0              ");
+  script.Print("******************************************");
+  script.Print("         Created By Creeper Team          ");
+  script.Print("                    -                     ");
+  script.Print("         The Creepy Mod Proyect           ");
+  script.Print("******************************************");    
+
+  builddate = GetBuildProp("ro.build.date", OPTIONS.info_dict)
+ # releasetype = GetBuildProp("ro.cm.releasetype", OPTIONS.info_dict)
+ # script.Print("*   Release: %s"%(releasetype));
+  script.Print("*   Build date: %s"%(builddate));
+
+#  if OPTIONS.override_prop:
+#    product = GetBuildProp("ro.build.product", OPTIONS.info_dict)
+#    script.Print("*   Product: %s"%(product));
+#  else:
+  device = GetBuildProp("ro.product.device", OPTIONS.info_dict)
+  model = GetBuildProp("ro.product.model", OPTIONS.info_dict)
+  script.Print("*   Device: %s (%s)"%(model, device));
+  script.Print("******************************************");
+
   if OPTIONS.backuptool:
+    script.Print("{*} Running backup scripts...")
+    script.AppendExtra("if ! is_mounted(\"/system\") then")
     script.Mount("/system")
+    script.AppendExtra("endif;")
     script.RunBackup("backup")
     script.Unmount("/system")
+    script.Print("{*} Done.")
 
   system_progress = 0.75
 
@@ -602,14 +607,13 @@ else if get_stage("%(bcb_dev)s") == "3/3" then
   if HasVendorPartition(input_zip):
     system_progress -= 0.1
 
-  if not OPTIONS.wipe_user_data:
-    script.AppendExtra("if is_mounted(\"/data\") then")
-    script.ValidateSignatures("data")
-    script.AppendExtra("else")
-    script.Mount("/data")
-    script.ValidateSignatures("data")
-    script.Unmount("/data")
-    script.AppendExtra("endif;")
+  script.AppendExtra("if is_mounted(\"/data\") then")
+  script.ValidateSignatures("data")
+  script.AppendExtra("else")
+  script.Mount("/data")
+  script.ValidateSignatures("data")
+  script.Unmount("/data")
+  script.AppendExtra("endif;")
 
   if "selinux_fc" in OPTIONS.info_dict:
     WritePolicyConfig(OPTIONS.info_dict["selinux_fc"], output_zip)
@@ -618,23 +622,28 @@ else if get_stage("%(bcb_dev)s") == "3/3" then
 
   system_items = ItemSet("system", "META/filesystem_config.txt")
   script.ShowProgress(system_progress, 0)
-
+  script.Print("{*} Following operation takes time, please wait...")
   if block_based:
     # Full OTA is done as an "incremental" against an empty source
     # image.  This has the effect of writing new data from the package
     # to the entire partition, but lets us reuse the updater code that
     # writes incrementals to do it.
+    script.Print("{*} Installation is block based")
     system_tgt = GetImage("system", OPTIONS.input_tmp, OPTIONS.info_dict)
     system_tgt.ResetFileMap()
     system_diff = common.BlockDifference("system", system_tgt, src=None, use_lzma=OPTIONS.use_lzma)
     system_diff.WriteScript(script, output_zip)
   else:
+    script.Print("{*} Installation is file based")
+    script.Print("{*} Formatting /system")
     script.FormatPartition("/system")
     script.Mount("/system", recovery_mount_options)
-    if not has_recovery_patch:
+    if OPTIONS.recovery and not has_recovery_patch:
       script.UnpackPackageDir("recovery", "/system")
+    script.Print("{*} Extracting /system")
     script.UnpackPackageDir("system", "/system")
     symlinks = CopyPartitionFiles(system_items, input_zip, output_zip)
+    script.Print("{*} Symlinking")
     script.MakeSymlinks(symlinks)
 
   boot_img = common.GetBootableImage("boot.img", "boot.img",
@@ -645,9 +654,11 @@ else if get_stage("%(bcb_dev)s") == "3/3" then
       common.ZipWriteStr(output_zip, "recovery/" + fn, data)
       system_items.Get("system/" + fn, dir=False)
 
-    common.MakeRecoveryPatch(OPTIONS.input_tmp, output_sink,
+    if OPTIONS.recovery:
+      common.MakeRecoveryPatch(OPTIONS.input_tmp, output_sink,
                              recovery_img, boot_img)
 
+    script.Print("{*} Setting permissions")
     system_items.GetMetadata(input_zip)
     system_items.Get("system").SetPermissions(script)
 
@@ -676,17 +687,37 @@ else if get_stage("%(bcb_dev)s") == "3/3" then
 
   device_specific.FullOTA_PostValidate()
 
-  if OPTIONS.backuptool:
-    script.ShowProgress(0.02, 10)
-    if block_based:
-      script.Mount("/system")
-    script.RunBackup("restore")
-    if block_based:
-      script.Unmount("/system")
+  if block_based:
+    script.AppendExtra("if ! is_mounted(\"/system\") then")
+    script.Mount("/system")
+    script.AppendExtra("endif;")
 
+  if OPTIONS.backuptool:
+    script.Print("{*} Restoring backup")
+    script.ShowProgress(0.02, 10)
+    script.RunBackup("restore")
+
+  if block_based:
+    script.AppendExtra("if is_mounted(\"/system\") then")
+    script.Unmount("/system")
+    script.AppendExtra("endif;")
+
+
+  if OPTIONS.wipe_caches:
+    script.Print("{*} Wiping caches")
+    script.FormatPartition("/cache")
+    script.AppendExtra("if ! is_mounted(\"/data\") then")
+    script.Mount("/data")
+    script.AppendExtra("endif;")
+    script.AppendExtra("""delete_recursive("/data/dalvik-cache");""");
+    script.AppendExtra("""delete_recursive("/cache");""");
+
+  script.Print("{*} Flashing boot.img")
   script.ShowProgress(0.05, 5)
   script.WriteRawImage("/boot", "boot.img")
 
+  script.Print("Thank you for using CreeperOS")
+  
   script.ShowProgress(0.2, 10)
   device_specific.FullOTA_InstallEnd()
 
