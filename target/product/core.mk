@@ -29,6 +29,7 @@ PRODUCT_PACKAGES += \
     CaptivePortalLogin \
     CertInstaller \
     Contacts \
+    CreeperOTAUpdater \
     DeskClock \
     DocumentsUI \
     DownloadProviderUi \
