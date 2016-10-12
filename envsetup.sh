@@ -28,7 +28,6 @@ Invoke ". build/envsetup.sh" from your shell to add the following functions to y
 - cmka:     Cleans and builds using mka.
 - repolastsync: Prints date and time of last repo sync.
 - reposync: Parallel repo sync using ionice and SCHED_BATCH
-- repopick: Utility to fetch changes from Gerrit.
 - installboot: Installs a boot.img to the connected device.
 - installrecovery: Installs a recovery.img to the connected device.
 
@@ -74,8 +73,8 @@ function check_product()
     fi
 
     if (echo -n $1 | grep -q -e "^creeper_") ; then
-       CREEPER_BUILD=$(echo -n $1 | sed -e 's/^cm_//g')
-       export BUILD_NUMBER=$((date +%s%N ; echo $CM_BUILD; hostname) | openssl sha1 | sed -e 's/.*=//g; s/ //g' | cut -c1-10)
+       CREEPER_BUILD=$(echo -n $1 | sed -e 's/^creeper_//g')
+       export BUILD_NUMBER=$((date +%s%N ; echo $CREEPER_BUILD; hostname) | openssl sha1 | sed -e 's/.*=//g; s/ //g' | cut -c1-10)
     else
        CREEPER_BUILD=
     fi
@@ -555,7 +554,7 @@ function breakfast()
             # A buildtype was specified, assume a full device name
             lunch $target
         else
-            # This is probably just the CM model name
+            # This is probably just the CreeperOS model name
             if [ -z "$variant" ]; then
                 variant="userdebug"
             fi
@@ -609,7 +608,7 @@ function lunch()
     check_product $product
     if [ $? -ne 0 ]
     then
-        # if we can't find a product, try to grab it off the CM github
+        # if we can't find a product, try to grab it off the CreeperOS github
         T=$(gettop)
         pushd $T > /dev/null
         build/tools/roomservice.py $product
@@ -640,6 +639,10 @@ function lunch()
     then
         echo
         return 1
+    fi
+
+    if [ "$(which pngquant)" == "" ]; then
+        echo -e "\033[1;33;41mpngquant is not installed! Builds will be larger!\033[0m"
     fi
 
     export TARGET_PRODUCT=$product
@@ -722,7 +725,7 @@ function eat()
 {
     if [ "$OUT" ] ; then
         MODVERSION=$(get_build_var CREEPER_VERSION)
-        ZIPFILE=creeper-$MODVERSION.zip
+        ZIPFILE=CreeperOS-$MODVERSION.zip
         ZIPPATH=$OUT/$ZIPFILE
         if [ ! -f $ZIPPATH ] ; then
             echo "Nothing to eat"
@@ -2017,19 +2020,6 @@ function installrecovery()
     fi
 }
 
-function makerecipe() {
-  if [ -z "$1" ]
-  then
-    echo "No branch name provided."
-    return 1
-  fi
-  cd android
-  sed -i s/'default revision=.*'/'default revision="refs\/heads\/'$1'"'/ default.xml
-  git commit -a -m "$1"
-  cd ..
-
-  repo forall -c '
-
 function mka() {
     local T=$(gettop)
     if [ "$T" ]; then
@@ -2246,15 +2236,10 @@ alias mmmp='dopush mmm'
 alias mkap='dopush mka'
 alias cmkap='dopush cmka'
 
-function repopick() {
-    T=$(gettop)
-    $T/build/tools/repopick.py $@
-}
-
 function fixup_common_out_dir() {
     common_out_dir=$(get_build_var OUT_DIR)/target/common
     target_device=$(get_build_var TARGET_DEVICE)
-    if [ ! -z $CM_FIXUP_COMMON_OUT ]; then
+    if [ ! -z $CREEPER_FIXUP_COMMON_OUT ]; then
         if [ -d ${common_out_dir} ] && [ ! -L ${common_out_dir} ]; then
             mv ${common_out_dir} ${common_out_dir}-${target_device}
             ln -s ${common_out_dir}-${target_device} ${common_out_dir}
